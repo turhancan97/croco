@@ -371,7 +371,7 @@ class DataAugmentationDINO(object):
 
 
 if __name__ == '__main__':
-    # python main_dino.py -c config/config_file.yaml
+    # python main_dino.py -c ../config/dino_config.yaml
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config')
     args = parser.parse_args()
