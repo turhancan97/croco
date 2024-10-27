@@ -165,3 +165,4 @@ data/
 pretrained_models/
 imagenet/
 .DS_Store
+saving_dir/
