@@ -137,12 +137,22 @@ def train_dino(args):
     cudnn.benchmark = True
 
     # ============ preparing data ... ============
-    transform = DataAugmentationDINO(
-        args.global_crops_scale,
-        args.local_crops_scale,
-        args.local_crops_number,
-    )
-    dataset = datasets.ImageFolder(args.data_path, transform=transform)
+    IMAGE_PAIRS = True
+
+    if IMAGE_PAIRS:
+        transform = DataAugmentationDINOSyntheticPairs(
+            args.global_crops_scale,
+            args.local_crops_scale,
+            args.local_crops_number,
+        )
+        dataset = SyntheticPairsDataset(args.data_path, transform=transform)
+    else:
+        transform = DataAugmentationDINO(
+            args.global_crops_scale,
+            args.local_crops_scale,
+            args.local_crops_number,
+        )
+        dataset = datasets.ImageFolder(args.data_path, transform=transform)
     sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
     data_loader = torch.utils.data.DataLoader(
         dataset,
@@ -415,6 +425,36 @@ class DINOLoss(nn.Module):
         # ema update
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
+class SyntheticPairsDataset(Dataset):
+    def __init__(self, root_dir, transform=None):
+        self.root_dir = root_dir
+        self.transform = transform
+        self.image_pairs = []
+        # Traverse the directory and collect all image pairs
+        for scene_dir, _, files in os.walk(root_dir):
+            # Filtering JPEG files and sorting to ensure consistent ordering of pairs
+            files = sorted([f for f in files if f.lower().endswith('.jpeg')])
+            # Collecting pairs (e.g., 00000000_1.jpeg and 00000000_2.jpeg)
+            for i in range(0, len(files), 2):
+                if i + 1 < len(files):
+                    img1, img2 = files[i], files[i + 1]
+                    if '_1.jpeg' in img1 and '_2.jpeg' in img2:
+                        self.image_pairs.append((os.path.join(scene_dir, img1), os.path.join(scene_dir, img2)))
+
+    def __len__(self):
+        return len(self.image_pairs)
+
+    def __getitem__(self, idx):
+        img1_path, img2_path = self.image_pairs[idx]
+        image1 = Image.open(img1_path).convert('RGB')
+        image2 = Image.open(img2_path).convert('RGB')
+
+        if self.transform:
+            # Apply transformations to both images
+            image1, image2 = self.transform(image1, image2)
+
+        return image1, image2
+
 
 class DataAugmentationDINO(object):
     def __init__(self, global_crops_scale, local_crops_scale, local_crops_number):
@@ -461,6 +501,46 @@ class DataAugmentationDINO(object):
         crops.append(self.global_transfo2(image))
         for _ in range(self.local_crops_number):
             crops.append(self.local_transfo(image))
+        return crops
+
+
+# Data Augmentation for DINO with Synthetic Pairs
+class DataAugmentationDINOSyntheticPairs:
+    def __init__(self, global_crops_scale, local_crops_scale, local_crops_number):
+        normalize = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
+
+        # First global crop
+        self.global_transfo1 = transforms.Compose([
+            transforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation=Image.BICUBIC),
+            normalize,
+        ])
+        # Second global crop
+        self.global_transfo2 = transforms.Compose([
+            transforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation=Image.BICUBIC),
+            normalize,
+        ])
+        # Transformation for the local small crops
+        self.local_crops_number = local_crops_number
+        self.local_transfo = transforms.Compose([
+            transforms.RandomResizedCrop(96, scale=local_crops_scale, interpolation=Image.BICUBIC),
+            normalize,
+        ])
+
+    def __call__(self, image1, image2):
+        # logging.info("Applying augmentations to student and teacher views.")
+        crops = []
+        # Global crops for image1
+        global_crop_1 = self.global_transfo1(image1)
+        crops.append(global_crop_1)
+        # Global crops for image2
+        global_crop_2 = self.global_transfo2(image2)
+        crops.append(global_crop_2)
+        # Local crops for image1
+        for _ in range(self.local_crops_number):
+            crops.append(self.local_transfo(image1))
         return crops
 
 
