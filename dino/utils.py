@@ -24,6 +24,7 @@ import math
 import random
 import datetime
 import subprocess
+import yaml
 from collections import defaultdict, deque
 
 import numpy as np
@@ -827,3 +828,17 @@ def multi_scale(samples, model):
     v /= 3
     v /= v.norm()
     return v
+
+def load_yaml(path: str) -> dict:
+    """
+    Loads a YAML file from the specified `path` and returns the data.
+
+    Parameters:
+        path (str): The path to the YAML file.
+
+    Returns:
+        dict: The loaded YAML data.
+    """
+    with open(path, "r") as file:
+        data = yaml.load(file, yaml.SafeLoader)
+        return data
