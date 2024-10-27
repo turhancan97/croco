@@ -166,3 +166,6 @@ pretrained_models/
 imagenet/
 .DS_Store
 saving_dir/
+CrocoDataLoader.py
+DinoDataLoader.py
+download-scannet.py
