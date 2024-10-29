@@ -130,6 +130,11 @@ def get_args_parser():
 
 
 def train_dino(args):
+
+    wandb_log = True
+    wandb_project = "DINO-Image-Pairs"
+    wandb_run_name = "DINO" + "_" + "pretraining" + "_with_" + "image_pairs" + "_" + time.strftime("%Y.%m.%d-%H.%M.00")
+
     utils.init_distributed_mode(args)
     utils.fix_random_seeds(args.seed)
     print("git:\n  {}\n".format(utils.get_sha()))
@@ -274,6 +279,10 @@ def train_dino(args):
     )
     start_epoch = to_restore["epoch"]
 
+    if wandb_log and utils.is_main_process():
+        import wandb
+        wandb.init(project=wandb_project, name=wandb_run_name)
+
     start_time = time.time()
     print("Starting DINO training !")
     for epoch in range(start_epoch, args.epochs):
@@ -283,6 +292,18 @@ def train_dino(args):
         train_stats = train_one_epoch(student, teacher, teacher_without_ddp, dino_loss,
             data_loader, optimizer, lr_schedule, wd_schedule, momentum_schedule,
             epoch, fp16_scaler, args)
+        
+        if wandb_log and utils.is_main_process():
+            # Log the loss and learning rate
+            wandb.log(
+                {
+                    # "epoch": e,
+                    "train/loss": train_stats["loss"],
+                    "wd": train_stats["wd"],
+                    "lr": train_stats["lr"],
+                },
+                step=epoch,
+            )
 
         # ============ writing logs ... ============
         save_dict = {
@@ -306,6 +327,8 @@ def train_dino(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+    if wandb_log and utils.is_main_process():
+        wandb.finish()
 
 
 def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader,
@@ -314,6 +337,8 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
     for it, (images, _) in enumerate(metric_logger.log_every(data_loader, 10, header)):
+        if (epoch == 0 and it == 0) and utils.is_main_process():
+            utils.save_teacher_student_views(images, it)
         # update weight decay and learning rate according to their schedule
         it = len(data_loader) * epoch + it  # global training iteration
         for i, param_group in enumerate(optimizer.param_groups):
@@ -425,7 +450,7 @@ class DINOLoss(nn.Module):
         # ema update
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
-class SyntheticPairsDataset(Dataset):
+class SyntheticPairsDataset(torch.utils.data.Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform
@@ -451,9 +476,9 @@ class SyntheticPairsDataset(Dataset):
 
         if self.transform:
             # Apply transformations to both images
-            image1, image2 = self.transform(image1, image2)
+            images = self.transform(image1, image2)
 
-        return image1, image2
+        return images, torch.tensor(0)
 
 
 class DataAugmentationDINO(object):
@@ -548,4 +573,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('DINO', parents=[get_args_parser()])
     args = parser.parse_args()
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    os.makedirs("training_visuals", exist_ok=True)
     train_dino(args)
