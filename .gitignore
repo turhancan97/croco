@@ -161,11 +161,26 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# For macOS
+.DS_Store
+
+# folders
 data/
 pretrained_models/
+wandb/
+logs/
 imagenet/
-.DS_Store
 saving_dir/
+training_visuals/
+
+#files
 CrocoDataLoader.py
 DinoDataLoader.py
 download-scannet.py
+
+# torch model
+*.pth
+*.pt
+
+# shell script
+*.sh
