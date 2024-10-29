@@ -31,7 +31,7 @@ import numpy as np
 import torch
 from torch import nn
 import torch.distributed as dist
-from PIL import ImageFilter, ImageOps
+from PIL import ImageFilter, ImageOps, Image
 
 
 class GaussianBlur(object):
@@ -842,3 +842,16 @@ def load_yaml(path: str) -> dict:
     with open(path, "r") as file:
         data = yaml.load(file, yaml.SafeLoader)
         return data
+
+def save_teacher_student_views(images, iteration):
+    for i, img in enumerate(images):
+        img_cpu = img[0].cpu()  # Take the first image in the batch and move it to CPU
+        img_np = img_cpu.permute(1, 2, 0).numpy()  # Convert from CxHxW to HxWxC
+        img_pil = Image.fromarray((img_np * 255).astype(np.uint8))  # Convert to PIL image
+
+        if i == 0:
+            img_pil.save(f"training_visuals/global_view1_iter{iteration}.png")
+        elif i == 1:
+            img_pil.save(f"training_visuals/global_view2_iter{iteration}.png")
+        else:
+            img_pil.save(f"training_visuals/local_view_{i - 1}_iter{iteration}.png")
