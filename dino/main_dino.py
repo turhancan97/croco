@@ -120,7 +120,7 @@ def get_args_parser():
     parser.add_argument('--data_path', default='/path/to/imagenet/train/', type=str,
         help='Please specify path to the ImageNet training data.')
     parser.add_argument('--output_dir', default=".", type=str, help='Path to save logs and checkpoints.')
-    parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
+    parser.add_argument('--saveckp_freq', default=30, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
     parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
@@ -450,34 +450,61 @@ class DINOLoss(nn.Module):
         # ema update
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
+
+def load_image(impath):
+    return Image.open(impath)
+
+def load_pairs_from_cache_file(fname, root=''):
+    assert os.path.isfile(fname), "cannot parse pairs from {:s}, file does not exist".format(fname)
+    with open(fname, 'r') as fid:
+        lines = fid.read().strip().splitlines()
+    pairs = [ (os.path.join(root,l.split()[0]), os.path.join(root,l.split()[1])) for l in lines]
+    return pairs
+    
+def load_pairs_from_list_file(fname, root=''):
+    assert os.path.isfile(fname), "cannot parse pairs from {:s}, file does not exist".format(fname)
+    with open(fname, 'r') as fid:
+        lines = fid.read().strip().splitlines()
+    pairs = [ (os.path.join(root,l+'_1.jpg'), os.path.join(root,l+'_2.jpg')) for l in lines if not l.startswith('#')]
+    return pairs
+    
+def dnames_to_image_pairs(dnames, data_dir='./data/'):
+    """
+    dnames: list of datasets with image pairs, separated by +
+    """
+    all_pairs = []
+    for dname in dnames.split('+'):
+        if dname=='habitat_release':
+            dirname = os.path.join(data_dir, 'habitat_release')
+            assert os.path.isdir(dirname), "cannot find folder for habitat_release pairs: "+dirname
+            cache_file = os.path.join(dirname, 'pairs.txt')
+            assert os.path.isfile(cache_file), "cannot find cache file for habitat_release pairs, please first create the cache file, see instructions. "+cache_file
+            pairs = load_pairs_from_cache_file(cache_file, root=dirname)
+        elif dname in ['ARKitScenes', 'MegaDepth', '3DStreetView', 'IndoorVL']:
+            dirname = os.path.join(data_dir, dname+'_crops')
+            assert os.path.isdir(dirname), "cannot find folder for {:s} pairs: {:s}".format(dname, dirname)
+            list_file = os.path.join(dirname, 'listing.txt')
+            assert os.path.isfile(list_file), "cannot find list file for {:s} pairs, see instructions. {:s}".format(dname, list_file)
+            pairs = load_pairs_from_list_file(list_file, root=dirname)            
+        print('  {:s}: {:,} pairs'.format(dname, len(pairs)))
+        all_pairs += pairs 
+    if '+' in dnames: print(' Total: {:,} pairs'.format(len(all_pairs)))
+    return all_pairs
+
 class SyntheticPairsDataset(torch.utils.data.Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
+    def __init__(self, root_dir, transform=None, dnames = 'habitat_release'):
+        super().__init__()
+        self.image_pairs = dnames_to_image_pairs(dnames, data_dir=root_dir)
         self.transform = transform
-        self.image_pairs = []
-        # Traverse the directory and collect all image pairs
-        for scene_dir, _, files in os.walk(root_dir):
-            # Filtering JPEG files and sorting to ensure consistent ordering of pairs
-            files = sorted([f for f in files if f.lower().endswith('.jpeg')])
-            # Collecting pairs (e.g., 00000000_1.jpeg and 00000000_2.jpeg)
-            for i in range(0, len(files), 2):
-                if i + 1 < len(files):
-                    img1, img2 = files[i], files[i + 1]
-                    if '_1.jpeg' in img1 and '_2.jpeg' in img2:
-                        self.image_pairs.append((os.path.join(scene_dir, img1), os.path.join(scene_dir, img2)))
 
     def __len__(self):
         return len(self.image_pairs)
 
-    def __getitem__(self, idx):
-        img1_path, img2_path = self.image_pairs[idx]
-        image1 = Image.open(img1_path).convert('RGB')
-        image2 = Image.open(img2_path).convert('RGB')
-
-        if self.transform:
-            # Apply transformations to both images
-            images = self.transform(image1, image2)
-
+    def __getitem__(self, index):
+        im1path, im2path = self.image_pairs[index]
+        im1 = load_image(im1path)
+        im2 = load_image(im2path)
+        if self.transform is not None: images = self.transform(im1, im2)
         return images, torch.tensor(0)
 
 
